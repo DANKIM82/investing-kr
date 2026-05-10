@@ -1,0 +1,31 @@
+# ============================================================
+# investing-kr Python 패키지 요구사항
+# ============================================================
+# 설치: pip install -r requirements.txt
+
+# --- 핵심 데이터 소스 ---
+OpenDartReader>=0.2.4    # 한국 DART (전자공시)
+pykrx>=1.0.45            # 한국 거래소 시세
+yfinance>=0.2.40         # 미국/일본 시세 + 재무
+requests>=2.31.0         # SEC EDGAR HTTP
+
+# --- 데이터 처리 ---
+pandas>=2.0.0
+numpy>=1.24.0
+python-dateutil>=2.8.2
+
+# --- 환경 변수 관리 ---
+python-dotenv>=1.0.0
+
+# --- 결과물 생성 ---
+python-docx>=1.1.0       # Word (.docx) 생성
+openpyxl>=3.1.0          # Excel (.xlsx) 생성
+matplotlib>=3.7.0        # 차트
+markdown>=3.5            # Markdown -> HTML
+
+# --- PDF 생성 (옵션, 한 가지 선택) ---
+weasyprint>=60.0         # 추천 (HTML CSS 풀 지원)
+# reportlab>=4.0.0       # 대안 (한글 폰트 설정 까다로움)
+
+# --- 일본 시장 (옵션) ---
+# jquants-api-client>=1.6  # J-Quants 가입 후 사용

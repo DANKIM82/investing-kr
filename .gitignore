@@ -1,0 +1,65 @@
+# 환경 변수 (API 키)
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 결과물 (개인 분석은 git에 안 올림)
+reports/*.html
+reports/*.docx
+reports/*.xlsx
+reports/*.pdf
+reports/.tmp/
+reports/.cache/
+
+# 단, .gitkeep은 추적
+!reports/.gitkeep
+
+# 로그
+*.log
+logs/
+
+# pyenv
+.python-version
+
+# Claude Code 임시
+.claude/cache/
