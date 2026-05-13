@@ -125,8 +125,8 @@ def _resolve_kr_ticker(query: str) -> str | None:
     # DART 시도
     if DART_API_KEY:
         try:
-            import OpenDartReader
-            dart = OpenDartReader(DART_API_KEY)
+            from opendartreader import OpenDartReader as _ODR
+            dart = _ODR(DART_API_KEY)
             corp_code = dart.find_corp_code(q)
             if corp_code:
                 # corp_code -> stock code 매핑은 별도 필요
@@ -162,41 +162,34 @@ def _companies_kr(ticker: str) -> dict[str, Any]:
         "corp_code": None,
     }
     
-    # pykrx로 기본 정보
-    try:
-        from pykrx import stock
-        result["name"] = stock.get_market_ticker_name(code)
-        # 시장 구분
-        today = datetime.now().strftime("%Y%m%d")
-        kospi = stock.get_market_ticker_list(today, market="KOSPI")
-        kosdaq = stock.get_market_ticker_list(today, market="KOSDAQ")
-        if code in kospi:
-            result["exchange"] = "KOSPI"
-        elif code in kosdaq:
-            result["exchange"] = "KOSDAQ"
-    except Exception as e:
-        _eprint(f"[warn] pykrx 정보 조회 실패: {e}")
-    
-    # DART로 추가 정보
+    # DART로 회사 정보 조회 (우선)
     if DART_API_KEY:
         try:
-            import OpenDartReader
-            dart = OpenDartReader(DART_API_KEY)
+            from opendartreader import OpenDartReader as _ODR
+            dart = _ODR(DART_API_KEY)
             corp = dart.company(code)
             if corp is not None:
-                # corp는 pandas Series
-                if hasattr(corp, 'to_dict'):
-                    corp_dict = corp.to_dict()
-                else:
-                    corp_dict = dict(corp) if corp else {}
-                
+                corp_dict = corp if isinstance(corp, dict) else (
+                    corp.to_dict() if hasattr(corp, 'to_dict') else dict(corp)
+                )
                 result["corp_code"] = corp_dict.get("corp_code")
                 result["name"] = corp_dict.get("corp_name") or result["name"]
                 result["name_en"] = corp_dict.get("corp_name_eng")
                 result["industry"] = corp_dict.get("induty_code")
                 result["description"] = corp_dict.get("est_dt", "")
+                # corp_cls: Y=유가증권(KOSPI), K=코스닥, N=코넥스
+                cls_map = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX"}
+                result["exchange"] = cls_map.get(corp_dict.get("corp_cls"))
         except Exception as e:
             _eprint(f"[warn] DART 정보 조회 실패: {e}")
+
+    # pykrx로 보충 (DART에서 못 가져온 필드만)
+    if not result["name"]:
+        try:
+            from pykrx import stock
+            result["name"] = stock.get_market_ticker_name(code)
+        except Exception as e:
+            _eprint(f"[warn] pykrx 정보 조회 실패: {e}")
     
     # 최신 분기 추정 (현재 날짜 기준 1분기 전)
     today = date.today()
@@ -248,9 +241,9 @@ def _fundamentals_kr(ticker: str, periods: list[str], series_ids: list[str]) -> 
     data_points = []
     
     try:
-        import OpenDartReader
-        dart = OpenDartReader(DART_API_KEY)
-        
+        from opendartreader import OpenDartReader as _ODR
+        dart = _ODR(DART_API_KEY)
+
         # 분기 -> DART 보고서 코드 매핑
         # Q1 -> 11013 (1분기보고서)
         # Q2 -> 11012 (반기보고서)
@@ -360,9 +353,9 @@ def _documents_kr(query: str, tickers: list[str], year: int | None) -> dict[str,
     
     docs = []
     try:
-        import OpenDartReader
-        dart = OpenDartReader(DART_API_KEY)
-        
+        from opendartreader import OpenDartReader as _ODR
+        dart = _ODR(DART_API_KEY)
+
         if not year:
             year = datetime.now().year
         
