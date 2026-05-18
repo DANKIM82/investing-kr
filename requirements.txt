@@ -32,3 +32,4 @@ weasyprint>=60.0         # 추천 (HTML CSS 풀 지원)
 
 streamlit>=1.40
 anthropic>=0.40
+streamlit-searchbox
