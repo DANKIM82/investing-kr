@@ -29,3 +29,5 @@ weasyprint>=60.0         # 추천 (HTML CSS 풀 지원)
 
 # --- 일본 시장 (옵션) ---
 # jquants-api-client>=1.6  # J-Quants 가입 후 사용
+
+streamlit>=1.40

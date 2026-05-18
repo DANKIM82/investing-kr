@@ -63,3 +63,9 @@ logs/
 
 # Claude Code 임시
 .claude/cache/
+
+*.zip
+
+test_tearsheet_via_api*.py
+
+docs_cache/*.pkl
