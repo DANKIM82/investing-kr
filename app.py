@@ -1,15 +1,7 @@
 """
-투자 분석 toolkit - Streamlit MVP.
+투자 분석 toolkit - Streamlit MVP (v2: 4 skills).
 
-로컬 실행:
-    pip install streamlit
-    streamlit run app.py
-
-Streamlit Cloud 배포:
-    1. requirements.txt 에 'streamlit' 추가
-    2. GitHub push
-    3. share.streamlit.io 에서 repo 연결
-    4. Secrets에 ANTHROPIC_API_KEY, DART_API_KEY, SEC_USER_AGENT 입력
+skills: tearsheet, earnings, dcf, bull_bear
 """
 import os
 import sys
@@ -21,7 +13,6 @@ import streamlit as st
 REPO_ROOT = Path(__file__).parent
 sys.path.insert(0, str(REPO_ROOT))
 
-# Streamlit Cloud는 st.secrets, 로컬은 .env
 try:
     if hasattr(st, "secrets") and len(st.secrets) > 0:
         for key in st.secrets:
@@ -33,26 +24,42 @@ load_dotenv()
 
 from core.skills.tearsheet import TearsheetSkill
 from core.skills.earnings import EarningsSkill
+from core.skills.dcf import DCFSkill
+from core.skills.bull_bear import BullBearSkill
 
 
 SKILLS = {
     "tearsheet": {
-        "display": "Tearsheet — 회사 1페이지 요약",
+        "display": "📋 Tearsheet — 회사 1페이지 요약",
         "class": TearsheetSkill,
         "desc": "회사 개요 + 5대 Bull/Bear tensions + 8분기 재무 + 모니터링 지표",
     },
     "earnings": {
-        "display": "Earnings Review — 최근 분기 실적 분석",
+        "display": "📊 Earnings Review — 최근 분기 실적 분석",
         "class": EarningsSkill,
         "desc": "최근 분기 헤드라인 + 매출/마진/현금흐름 deep dive",
+    },
+    "dcf": {
+        "display": "💰 DCF Valuation — 적정 주가 평가",
+        "class": DCFSkill,
+        "desc": "5년 projection + 가정 + Bull/Base/Bear 적정 가치 + 민감도",
+    },
+    "bull_bear": {
+        "display": "🎯 Bull/Base/Bear — 시나리오 분석",
+        "class": BullBearSkill,
+        "desc": "낙관/중립/비관 3가지 시나리오 + 확률 + 관찰 포인트",
     },
 }
 
 EXAMPLES = [
     ("005930", "🇰🇷 삼성전자"),
+    ("000660", "🇰🇷 SK하이닉스"),
     ("035420", "🇰🇷 네이버"),
+    ("035720", "🇰🇷 카카오"),
     ("AAPL", "🇺🇸 Apple"),
+    ("NVDA", "🇺🇸 NVIDIA"),
     ("7203", "🇯🇵 Toyota"),
+    ("6758", "🇯🇵 Sony"),
 ]
 
 
@@ -64,11 +71,10 @@ st.set_page_config(
 )
 
 st.title("📊 투자 분석 toolkit")
-st.caption("DART · yfinance · SEC EDGAR · Claude AI · 무료 (베타)")
+st.caption("DART · yfinance · SEC EDGAR · Claude AI · 무료 베타")
 
-# API 키 체크
 if not os.getenv("ANTHROPIC_API_KEY", "").startswith("sk-ant-"):
-    st.error("⚠ ANTHROPIC_API_KEY 가 설정되지 않았습니다. `.env` 또는 Streamlit Secrets 확인.")
+    st.error("⚠ ANTHROPIC_API_KEY 가 설정되지 않았습니다.")
     st.stop()
 
 
@@ -80,11 +86,16 @@ with st.container(border=True):
 
     with col1:
         st.markdown("**빠른 예시**")
-        ex_cols = st.columns(len(EXAMPLES))
-        for col, (t, label) in zip(ex_cols, EXAMPLES):
-            with col:
-                if st.button(label, use_container_width=True, key=f"ex_{t}"):
-                    st.session_state["ticker_input"] = t
+        # 8개 예시를 2줄로 배치
+        for row_idx in range(2):
+            ex_cols = st.columns(4)
+            for col_idx, col in enumerate(ex_cols):
+                idx = row_idx * 4 + col_idx
+                if idx < len(EXAMPLES):
+                    t, label = EXAMPLES[idx]
+                    with col:
+                        if st.button(label, use_container_width=True, key=f"ex_{t}"):
+                            st.session_state["ticker_input"] = t
 
         ticker = st.text_input(
             "종목 코드",
@@ -116,10 +127,19 @@ if run and ticker:
     with st.status(f"{ticker} 분석 중...", expanded=True) as status:
         try:
             st.write("📡 데이터 수집 중 (DART / yfinance / SEC EDGAR)...")
-            st.write("🧠 Claude 분석 호출 중 (~30초)...")
-            result = runner.run(ticker)
+            st.write(f"🧠 Claude로 {SKILLS[skill_name]['display']} 생성 중 (~30초)...")
+            
+            # skill별로 다른 max_tokens
+            max_tokens_per_skill = {
+                "dcf": 6000,
+                "bull_bear": 5000,
+                "tearsheet": 3500,
+                "earnings": 3500,
+            }
+            result = runner.run(ticker, max_tokens=max_tokens_per_skill.get(skill_name, 3500))
+            
             status.update(
-                label=f"✅ {ticker} 분석 완료 (비용 ${result['cost']:.4f})",
+                label=f"✅ {ticker} 완료 (비용 ${result['cost']:.4f})",
                 state="complete",
                 expanded=False,
             )
@@ -130,7 +150,6 @@ if run and ticker:
                 st.code(traceback.format_exc())
             st.stop()
 
-    # 결과 요약 카드
     company = result["data"].get("company", {})
     fund = result["data"].get("fundamentals", {})
 
@@ -144,7 +163,6 @@ if run and ticker:
     with metric_cols[3]:
         st.metric("API 비용", f"${result['cost']:.4f}")
 
-    # HTML 리포트
     html_path = Path(result["output_path"])
     if html_path.exists():
         html_content = html_path.read_text(encoding="utf-8")

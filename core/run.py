@@ -3,15 +3,19 @@
 import sys
 
 from dotenv import load_dotenv
-load_dotenv()  # .env 자동 로드
+load_dotenv()
 
 from core.skills.tearsheet import TearsheetSkill
 from core.skills.earnings import EarningsSkill
+from core.skills.dcf import DCFSkill
+from core.skills.bull_bear import BullBearSkill
 
 
 SKILLS = {
     "tearsheet": TearsheetSkill,
     "earnings": EarningsSkill,
+    "dcf": DCFSkill,
+    "bull_bear": BullBearSkill,
 }
 
 
