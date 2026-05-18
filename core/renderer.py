@@ -1,34 +1,138 @@
-"""공통 HTML 렌더링 헬퍼들. 통화별 fmt_num + 라벨 자동 변환."""
+"""공통 HTML 렌더링 헬퍼들. v3: 모바일 다크모드 강제 라이트모드."""
 
 from datetime import datetime
 
 
+# 모든 색상 명시적 + !important 로 iOS Safari 다크모드 자동변환 방지
 CSS = """
-  body { font-family: -apple-system, 'Segoe UI', sans-serif; max-width: 1200px; margin: 40px auto; padding: 20px; color: #222; line-height: 1.6; }
-  h1 { font-size: 22px; border-bottom: 2px solid #222; padding-bottom: 8px; }
-  h2 { font-size: 16px; margin-top: 32px; color: #1a4480; }
-  .meta { color: #666; font-size: 13px; }
-  .disclaimer { background: #fff8e1; border-left: 3px solid #f9a825; padding: 8px 12px; margin: 16px 0; font-size: 13px; }
-  .overview { background: #f5f5f5; padding: 16px; border-radius: 4px; }
-  .tension { display: flex; gap: 12px; margin: 12px 0; padding: 10px; border-left: 3px solid #1a4480; background: #fafafa; }
-  .tension-num { font-size: 18px; font-weight: bold; color: #1a4480; min-width: 32px; }
+  :root { color-scheme: light only; }
+  html, body { background: #ffffff !important; color: #222222 !important; }
+  body {
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    max-width: 1200px;
+    margin: 40px auto;
+    padding: 20px;
+    line-height: 1.6;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 {
+    font-size: 22px;
+    color: #222222 !important;
+    border-bottom: 2px solid #222222;
+    padding-bottom: 8px;
+  }
+  h2 {
+    font-size: 16px;
+    margin-top: 32px;
+    color: #1a4480 !important;
+  }
+  p, li, td, th, div, span {
+    color: #222222 !important;
+  }
+  .meta {
+    color: #555555 !important;
+    font-size: 13px;
+  }
+  .disclaimer {
+    background: #fff8e1 !important;
+    color: #4a3800 !important;
+    border-left: 3px solid #f9a825;
+    padding: 8px 12px;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  .disclaimer * { color: #4a3800 !important; }
+  .overview {
+    background: #f0f4f8 !important;
+    color: #222222 !important;
+    padding: 16px;
+    border-radius: 4px;
+  }
+  .tension {
+    display: flex;
+    gap: 12px;
+    margin: 12px 0;
+    padding: 10px;
+    border-left: 3px solid #1a4480;
+    background: #f5f7fa !important;
+    color: #222222 !important;
+  }
+  .tension * { color: #222222 !important; }
+  .tension-num {
+    font-size: 18px;
+    font-weight: bold;
+    color: #1a4480 !important;
+    min-width: 32px;
+  }
   .tension-headline { font-size: 14px; }
-  .tension-explanation { font-size: 13px; color: #444; margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
-  th, td { padding: 5px 8px; border: 1px solid #ddd; text-align: right; }
+  .tension-explanation {
+    font-size: 13px;
+    color: #444444 !important;
+    margin-top: 4px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 12px;
+    background: #ffffff !important;
+  }
+  th, td {
+    padding: 5px 8px;
+    border: 1px solid #dddddd;
+    text-align: right;
+    background: #ffffff !important;
+    color: #222222 !important;
+  }
   th:first-child, td:first-child { text-align: left; }
-  th { background: #f0f0f0; font-weight: 600; }
-  tbody tr:hover { background: #fafafa; }
-  .data-note { font-size: 12px; color: #888; font-style: italic; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; background: #1a4480; color: white; }
-  .highlight { background: #e7f3ff; padding: 14px; border-radius: 4px; font-size: 15px; font-weight: 600; margin: 16px 0; }
+  th {
+    background: #f0f0f0 !important;
+    font-weight: 600;
+  }
+  tbody tr:hover { background: #fafafa !important; }
+  .data-note {
+    font-size: 12px;
+    color: #666666 !important;
+    font-style: italic;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    background: #1a4480 !important;
+    color: #ffffff !important;
+  }
+  .highlight {
+    background: #e7f3ff !important;
+    color: #0d2c54 !important;
+    padding: 14px;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 600;
+    margin: 16px 0;
+  }
+  .highlight * { color: #0d2c54 !important; }
   ul { padding-left: 24px; }
-  ul li { margin: 6px 0; }
+  ul li {
+    margin: 6px 0;
+    color: #222222 !important;
+  }
+
+  /* iOS Safari 다크모드 강제 비활성화 */
+  @media (prefers-color-scheme: dark) {
+    html, body { background: #ffffff !important; color: #222222 !important; }
+    h1, h2, h3, p, li, td, th, div, span { color: #222222 !important; }
+    .meta { color: #555555 !important; }
+    .data-note { color: #666666 !important; }
+    .tension-explanation { color: #444444 !important; }
+    .badge { color: #ffffff !important; }
+    .highlight, .highlight * { color: #0d2c54 !important; }
+    .disclaimer, .disclaimer * { color: #4a3800 !important; }
+  }
 """
 
 
-# 통화별 단위 정의
-# (threshold, suffix) — 큰 단위부터
 CURRENCY_UNITS = {
     "KRW": {
         "eps_label": "원",
@@ -50,22 +154,17 @@ CURRENCY_UNITS = {
 
 
 def fmt_num(v, currency: str = "KRW") -> str:
-    """통화별 숫자 포맷팅."""
     if v is None:
         return "—"
-
     unit_def = CURRENCY_UNITS.get(currency, CURRENCY_UNITS["KRW"])
     abs_v = abs(v)
-
     for threshold, suffix in unit_def["scales"]:
         if abs_v >= threshold:
             return f"{v/threshold:,.2f}{suffix}"
-
     return f"{v:,.0f}"
 
 
 def localize_label(label: str, currency: str = "KRW") -> str:
-    """라벨의 (원) 표기를 통화에 맞게 변환."""
     if currency == "KRW" or "(원)" not in label:
         return label
     unit_def = CURRENCY_UNITS.get(currency, CURRENCY_UNITS["KRW"])
@@ -102,7 +201,6 @@ def render_tensions(tensions: list) -> str:
 
 
 def render_financial_table(financial_table: list, periods: list, currency: str = "KRW") -> str:
-    """통화별 fmt_num + 라벨 localize."""
     headers = "".join(f"<th>{p}</th>" for p in periods)
     rows = ""
     for row in financial_table:
@@ -125,10 +223,16 @@ def render_metrics_table(metrics: list) -> str:
 
 
 def wrap_html(title: str, body: str, lang: str = "ko") -> str:
+    """v3: color-scheme + viewport 메타 추가."""
     return f"""<!DOCTYPE html>
-<html lang="{lang}"><head><meta charset="UTF-8">
+<html lang="{lang}"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light">
 <title>{title}</title>
-<style>{CSS}</style></head><body>
+<style>{CSS}</style>
+</head><body>
 {body}
 </body></html>"""
 
