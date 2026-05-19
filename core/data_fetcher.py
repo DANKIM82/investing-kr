@@ -1,4 +1,5 @@
-"""infra wrapper - fundamentals + market_data 통합. 시장별 정규화."""
+"""infra wrapper - fundamentals + market_data 통합. 시장별 정규화.
+v4: KR net_income Q4 bug fix - 항상 pretax-tax로 분기값 산출 (누적값 덮어쓰기)."""
 
 import json
 import os
@@ -18,7 +19,6 @@ CF_METRICS = {"operating_cash_flow", "capex", "free_cash_flow", "dividends_paid"
 
 
 def _run_infra(script: str, cmd: list[str]) -> dict:
-    """공통 infra 스크립트 호출."""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
@@ -47,7 +47,6 @@ def _run_infra(script: str, cmd: list[str]) -> dict:
 
 
 def run_infra(cmd: list[str]) -> dict:
-    """기존 호환성용. free_data_kr.py 호출."""
     return _run_infra("free_data_kr.py", cmd)
 
 
@@ -65,11 +64,11 @@ def get_market_data(ticker: str) -> dict:
 
     market_data = {
         "price": quote.get("price"),
-        "market_cap": quote.get("market_cap"),
+        "market_cap": quote.get("market_cap") or multiples.get("market_cap"),
         "shares_outstanding": quote.get("shares_outstanding"),
         "beta": quote.get("beta") or multiples.get("beta"),
-        "pe_ttm": quote.get("pe_ttm"),
-        "pe_forward": quote.get("pe_forward"),
+        "pe_ttm": quote.get("pe_ttm") or multiples.get("pe_ttm"),
+        "pe_forward": quote.get("pe_forward") or multiples.get("pe_forward"),
         "enterprise_value": multiples.get("enterprise_value"),
         "ev_ebitda": multiples.get("ev_ebitda"),
         "ev_revenue": multiples.get("ev_revenue"),
@@ -90,11 +89,7 @@ def get_market_data(ticker: str) -> dict:
 
 
 def get_fundamentals(ticker: str, periods: list[str] | None = None) -> dict:
-    """
-    분기별 재무 데이터 fetch + 시장별 정규화.
-
-    periods를 None으로 두면 yfinance/SEC/DART가 주는 대로 다 받음.
-    """
+    """분기별 재무 데이터 fetch + 시장별 정규화."""
     cmd = ["fundamentals", ticker]
     if periods:
         cmd.extend(["--periods", ",".join(periods)])
@@ -110,7 +105,7 @@ def get_fundamentals(ticker: str, periods: list[str] | None = None) -> dict:
 
     if market == "KR":
         normalized = _normalize_kr(raw_pivot)
-        normalized = _derive_missing_net_income(normalized)
+        normalized = _derive_quarterly_net_income(normalized)
     else:
         normalized = {k: dict(v) for k, v in raw_pivot.items()}
 
@@ -158,25 +153,30 @@ def _normalize_kr(raw_pivot: dict) -> dict:
     return dict(normalized)
 
 
-def _derive_missing_net_income(normalized: dict) -> dict:
-    """KR 회사 분기별 net_income 추정 (pretax - tax)."""
+def _derive_quarterly_net_income(normalized: dict) -> dict:
+    """
+    KR 회사 분기별 net_income 산출.
+
+    v4 fix: DART의 net_income은 Q1~Q3는 미보고 / Q4는 연간 누적값으로 들어오는
+    경우가 흔함. _normalize_kr의 Q4 차감 로직은 Q1~Q3 = 0 가정이라
+    잘못된 분기값을 산출함.
+
+    해결: pretax_income과 tax_expense (이미 분기값으로 정규화됨) 를 기반으로
+    모든 분기의 net_income을 새로 산출. 기존 normalized net_income은 무시.
+    """
     pretax = normalized.get("pretax_income", {})
     tax = normalized.get("tax_expense", {})
 
-    if "net_income" not in normalized:
-        normalized["net_income"] = {}
-
-    derived_count = 0
+    derived = {}
     for period, pretax_val in pretax.items():
-        if period in normalized["net_income"]:
-            continue
-        if period not in tax:
-            continue
-        normalized["net_income"][period] = pretax_val - tax[period]
-        derived_count += 1
+        if period in tax:
+            derived[period] = pretax_val - tax[period]
 
-    if derived_count > 0:
-        print(f"  ℹ net_income {derived_count}개 분기를 pretax-tax로 추정")
+    if derived:
+        # 기존 net_income을 분기값으로 완전히 대체
+        old_count = len(normalized.get("net_income", {}))
+        normalized["net_income"] = derived
+        print(f"  ℹ net_income {len(derived)}개 분기 = pretax - tax 로 재계산 (기존 {old_count}개 덮어쓰기)")
 
     return normalized
 
