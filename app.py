@@ -1,5 +1,5 @@
 """
-투자 분석 toolkit - Streamlit MVP v3 (회사명 검색 + autocomplete).
+투자 분석 toolkit - Streamlit MVP v4 (옵션 A: 검색 버튼 + 라디오 결과).
 """
 import os
 import sys
@@ -7,7 +7,6 @@ import traceback
 from pathlib import Path
 
 import streamlit as st
-from streamlit_searchbox import st_searchbox
 
 REPO_ROOT = Path(__file__).parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -25,7 +24,7 @@ from core.skills.tearsheet import TearsheetSkill
 from core.skills.earnings import EarningsSkill
 from core.skills.dcf import DCFSkill
 from core.skills.bull_bear import BullBearSkill
-from core.data_fetcher import run_infra
+from core import company_search
 
 
 SKILLS = {
@@ -63,35 +62,6 @@ EXAMPLES = [
 ]
 
 
-# ─────────────────────────────────────────────────
-# 회사 검색 (autocomplete)
-# ─────────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
-def _search_companies_cached(query: str) -> list[dict]:
-    """ticker/회사명 검색. 5분 캐시."""
-    if not query or len(query.strip()) < 1:
-        return []
-    raw = run_infra(["companies", query.strip()])
-    return raw.get("results", [])[:10]
-
-
-def search_companies(query: str) -> list[tuple[str, str]]:
-    """streamlit_searchbox 콜백. (표시 라벨, ticker) 튜플 반환."""
-    results = _search_companies_cached(query)
-    market_emoji = {"KR": "🇰🇷", "US": "🇺🇸", "JP": "🇯🇵"}
-    return [
-        (
-            f"{market_emoji.get(r.get('market'), '🌐')} {r.get('name', '?')} ({r.get('ticker', '?')})",
-            r.get("ticker", ""),
-        )
-        for r in results
-        if r.get("ticker")
-    ]
-
-
-# ─────────────────────────────────────────────────
-# UI
-# ─────────────────────────────────────────────────
 st.set_page_config(
     page_title="투자 분석 toolkit",
     page_icon="📊",
@@ -106,20 +76,65 @@ if not os.getenv("ANTHROPIC_API_KEY", "").startswith("sk-ant-"):
     st.error("⚠ ANTHROPIC_API_KEY 가 설정되지 않았습니다.")
     st.stop()
 
+if not company_search.is_index_available():
+    st.warning(
+        "⚠ 회사 인덱스가 빌드되지 않았습니다. 다음 명령으로 빌드하세요:\n\n"
+        "`python scripts/build_company_index.py`\n\n"
+        "그 전까지는 빠른 예시 버튼만 사용 가능합니다."
+    )
 
+
+# 세션 상태 초기화
+if "search_results" not in st.session_state:
+    st.session_state.search_results = []
+if "selected_ticker" not in st.session_state:
+    st.session_state.selected_ticker = None
+if "selected_company" not in st.session_state:
+    st.session_state.selected_company = None
+
+
+# ─────────────────────────────────────────────────
+# 검색 영역
+# ─────────────────────────────────────────────────
 with st.container(border=True):
     col1, col2 = st.columns([3, 2])
 
     with col1:
         st.markdown("**🔍 회사 검색**")
 
-        searched_ticker = st_searchbox(
-            search_companies,
-            placeholder="삼성, Apple, 미코, 005930, AAPL ...",
-            key="company_search",
-            clear_on_submit=False,
-        )
+        search_col, btn_col = st.columns([4, 1])
+        with search_col:
+            query = st.text_input(
+                "회사명 또는 종목코드",
+                placeholder="삼성, Apple, 미코, 005930, AAPL ...",
+                label_visibility="collapsed",
+                key="search_query",
+            )
+        with btn_col:
+            search_clicked = st.button("🔍 검색", use_container_width=True)
 
+        if search_clicked and query:
+            results = company_search.search(query, limit=10)
+            st.session_state.search_results = results
+            st.session_state.selected_ticker = None
+            st.session_state.selected_company = None
+            if not results:
+                st.info(f"'{query}' 검색 결과가 없습니다. 종목코드를 직접 입력해 보세요 (예: 005930, AAPL).")
+
+        # 검색 결과 라디오
+        if st.session_state.search_results:
+            labels = [company_search.format_label(c) for c in st.session_state.search_results]
+            choice_label = st.radio(
+                f"검색 결과 ({len(st.session_state.search_results)}개)",
+                options=labels,
+                key="result_choice",
+            )
+            chosen_idx = labels.index(choice_label)
+            chosen = st.session_state.search_results[chosen_idx]
+            st.session_state.selected_ticker = chosen["ticker"]
+            st.session_state.selected_company = chosen
+
+        st.markdown("---")
         st.markdown("**또는 빠른 예시**")
         for row_idx in range(2):
             ex_cols = st.columns(4)
@@ -129,14 +144,15 @@ with st.container(border=True):
                     t, label = EXAMPLES[idx]
                     with col:
                         if st.button(label, use_container_width=True, key=f"ex_{t}"):
-                            st.session_state["ticker_from_example"] = t
+                            st.session_state.selected_ticker = t
+                            st.session_state.selected_company = {"ticker": t, "name": label}
+                            st.session_state.search_results = []
 
-        # 최종 ticker - 예시 버튼이 우선, 그 다음 검색
-        example_ticker = st.session_state.get("ticker_from_example")
-        ticker = example_ticker or searched_ticker or ""
-
+        # 현재 선택 표시
+        ticker = st.session_state.selected_ticker
         if ticker:
-            st.success(f"✓ 선택된 종목: **{ticker}**")
+            company = st.session_state.selected_company or {}
+            st.success(f"✓ 선택: **{company.get('name', ticker)}** ({ticker})")
 
     with col2:
         skill_name = st.radio(
@@ -160,8 +176,6 @@ st.caption("⚠ 학습·참고용 도구. 실제 투자 결정에 사용 금지.
 # 실행
 # ─────────────────────────────────────────────────
 if run and ticker:
-    st.session_state.pop("ticker_from_example", None)
-
     skill_cls = SKILLS[skill_name]["class"]
     runner = skill_cls()
 
@@ -182,7 +196,6 @@ if run and ticker:
                 ticker,
                 max_tokens=max_tokens_per_skill.get(skill_name, 3500),
             )
-
             status.update(
                 label=f"✅ {ticker} 완료 (비용 ${result['cost']:.4f})",
                 state="complete",
@@ -211,7 +224,6 @@ if run and ticker:
     html_path = Path(result["output_path"])
     if html_path.exists():
         html_content = html_path.read_text(encoding="utf-8")
-
         download_col, _ = st.columns([1, 5])
         with download_col:
             st.download_button(
@@ -221,5 +233,4 @@ if run and ticker:
                 mime="text/html",
                 use_container_width=True,
             )
-
         st.components.v1.html(html_content, height=2400, scrolling=True)
