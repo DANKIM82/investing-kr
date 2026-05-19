@@ -1,10 +1,10 @@
-"""Industry skill v2 - 최대 5개 회사 peer 비교.
-v2 변경:
-- 분기 표에 회사명 (ticker 대신) 표시
-- LLM prompt가 최근 분기 (Q3, Q4) 중심 분석하도록 가이드 추가
-- 회사 한 줄 평에 ticker + name 함께 표시
+"""Industry skill v3 - 다회사 peer 비교.
+v3 변경:
+- LLM 응답의 모든 ticker → "회사명 (ticker)" 형식으로 자동 치환 (post-processing)
+- Prompt에 "ticker 단독 사용 금지" 가이드 + 회사명 매핑 명시
 """
 
+import re
 from core.data_fetcher import get_company, get_fundamentals, get_market_data
 from core.renderer import render_header, wrap_html
 from core.skills.base import SkillRunner
@@ -35,12 +35,48 @@ def _to_usd(value, currency):
 
 
 def _short_name(name, max_len=20):
-    """회사명이 너무 길면 자르기."""
     if not name:
         return "?"
     if len(name) > max_len:
         return name[:max_len-1] + "…"
     return name
+
+
+def _replace_tickers_with_names(text: str, ticker_to_name: dict) -> str:
+    """텍스트 내 단독 등장 ticker → '회사명 (ticker)' 으로 치환."""
+    if not isinstance(text, str) or not text:
+        return text
+
+    sorted_tickers = sorted(ticker_to_name.keys(), key=len, reverse=True)
+
+    for ticker in sorted_tickers:
+        name = ticker_to_name[ticker]
+        if not name or name == ticker:
+            continue
+
+        # 이미 '(ticker)' 형식인 부분 임시 마킹 (보호)
+        marker = f"__PROTECTED_{ticker}__"
+        text = re.sub(r'\(' + re.escape(ticker) + r'\)', marker, text)
+
+        # 단독 ticker → "회사명 (ticker)"
+        pattern = r'(?<![A-Za-z0-9\uac00-\ud7af])' + re.escape(ticker) + r'(?![A-Za-z0-9\.])'
+        text = re.sub(pattern, f"{name} ({ticker})", text)
+
+        # 마커 복원
+        text = text.replace(marker, f"({ticker})")
+
+    return text
+
+
+def _post_process_analysis(analysis: dict, ticker_to_name: dict):
+    """analysis JSON 재귀적 순회하며 ticker 치환."""
+    if isinstance(analysis, str):
+        return _replace_tickers_with_names(analysis, ticker_to_name)
+    if isinstance(analysis, dict):
+        return {k: _post_process_analysis(v, ticker_to_name) for k, v in analysis.items()}
+    if isinstance(analysis, list):
+        return [_post_process_analysis(item, ticker_to_name) for item in analysis]
+    return analysis
 
 
 class IndustrySkill(SkillRunner):
@@ -140,7 +176,6 @@ class IndustrySkill(SkillRunner):
                 },
             })
 
-        # 최근 분기 명시 (LLM에 강조)
         sorted_periods = sorted(all_periods)
         latest = sorted_periods[-1] if sorted_periods else None
         prior = sorted_periods[-2] if len(sorted_periods) >= 2 else None
@@ -151,30 +186,28 @@ class IndustrySkill(SkillRunner):
             "latest_quarter": latest,
             "prior_quarter": prior,
             "analysis_focus": (
-                f"분석은 가장 최근 분기 ({latest}) 와 직전 분기 ({prior}) 에 집중. "
-                "오래된 분기 (2025Q1, Q2) 의 변동은 부차적. "
-                "단, 추세 (improving / deteriorating) 를 보여줄 때만 과거 분기 참고."
+                f"분석은 가장 최근 분기 ({latest}) 와 직전 분기 ({prior}) 에 집중."
             ),
-            "data_notes": "모든 재무 수치는 USD 환산 (KRW 1370, JPY 155). EPS는 원본 단위. 시장 데이터는 실시간.",
+            "data_notes": "USD 환산. EPS는 원본 단위. 시장 데이터는 실시간.",
         }
 
     def build_prompt_schema(self) -> str:
         return """{
   "industry_overview": "산업 개요 200-300자",
   "leader_laggard_analysis": {
-    "leader": "ticker + 회사명 + 최근 분기 (Q3/Q4) 수치 기반 leader 선정 이유",
-    "laggard": "ticker + 회사명 + 최근 분기 수치 기반 laggard 선정 이유. 오래된 분기 (Q1, Q2) 위주 분석 금지",
-    "wildcards": "흥미로운 outlier 1-2개 (최근 분기 기준)"
+    "leader": "회사명 형식 (ticker만 금지) + 최근 분기 수치 기반 선정 이유",
+    "laggard": "회사명 형식 + 최근 분기 수치 기반",
+    "wildcards": "interesting outlier 1-2개"
   },
   "competitive_dynamics": [
-    {"theme": "테마", "observation": "최근 분기 (Q3, Q4) 수치 위주 관찰. 트렌드 보여줄 때만 과거 참고"}
+    {"theme": "테마", "observation": "회사명으로 언급. ticker 단독 사용 금지"}
   ],
   "valuation_comparison": {
-    "summary": "PE forward, EV/EBITDA 기준 멀티플 비교 한 줄",
-    "key_observations": "흥미로운 valuation 관찰 2-3개"
+    "summary": "PE forward, EV/EBITDA 기준 한 줄. 회사명 사용",
+    "key_observations": "관찰 2-3개. 회사명 사용"
   },
   "company_one_liners": [
-    {"ticker": "...", "tagline": "한 줄 평 (최근 분기 + 회사 고유 특징)"}
+    {"ticker": "...", "tagline": "한 줄 평"}
   ],
   "monitoring_metrics": [
     {"metric": "지표", "rationale": "왜 중요"}
@@ -183,38 +216,50 @@ class IndustrySkill(SkillRunner):
 }"""
 
     def build_system_prompt(self) -> str:
-        """Industry 전용 시스템 프롬프트. 최근 분기 강조."""
         skill_prompt = self.load_skill_prompt()
         schema = self.build_prompt_schema()
+
         return f"""너는 한국/미국/일본 시장 투자 리서치 애널리스트로 peer group 비교 분석을 수행한다.
 
 <skill_definition>
 {skill_prompt}
 </skill_definition>
 
-🚨 분석 시점 규칙 (중요):
-- **분석의 80%는 가장 최근 분기 (latest_quarter) 와 직전 분기 (prior_quarter) 에 집중**.
-- 과거 분기 (예: 2025Q1, Q2) 는 **추세 비교** 목적으로만 짧게 인용. 오래된 변동을 길게 분석하지 말 것.
-- Leader/Laggard 선정 시 반드시 **최근 분기 수치** 기반.
-- 예: "2025Q1→Q2 변동" 같은 과거 추이는 부차적. "Q3→Q4 추이" 가 1차.
+🚨 회사 언급 규칙 (가장 중요):
+- **ticker 코드 단독 사용 금지** (예: "000660 영업이익률 58.4%" ❌)
+- **반드시 회사명 사용** (예: "에스케이하이닉스(주) 영업이익률 58.4%" ✅)
+- 회사를 본문에 처음 언급할 때는 회사명 + (ticker) 형식. 이후엔 회사명만 사용 OK
 
-기타 규칙:
-- 제공된 데이터의 실제 수치를 직접 인용.
-- 추측 금지. 데이터에 없으면 만들지 마라.
-- 통화 단위는 USD 통일 ($XX.XB 형식).
-- 출력은 JSON 한 덩어리. 다른 텍스트 금지.
+🚨 분석 시점 규칙:
+- 분석의 80%는 가장 최근 분기 (latest_quarter) 와 직전 분기 (prior_quarter) 에 집중
+- 과거 분기는 추세 비교 목적으로만 짧게 인용
+- Leader/Laggard 선정 시 반드시 최근 분기 수치 기반
+
+기타:
+- 제공된 데이터의 실제 수치를 직접 인용. 추측 금지
+- 통화 단위는 USD 통일
+- 출력은 JSON 한 덩어리
 
 JSON 스키마:
 {schema}"""
 
     def render(self, ticker: str, data: dict, analysis: dict) -> str:
         companies = data["companies"]
+
+        # ticker → 회사명 매핑
+        ticker_to_name = {
+            c["ticker"]: c["company"].get("name", c["ticker"])
+            for c in companies
+        }
+
+        # ★ Post-processing: LLM 응답에서 ticker 단독 등장 → 회사명으로 자동 치환
+        analysis = _post_process_analysis(analysis, ticker_to_name)
+
         all_periods = sorted({p for c in companies for p in c["fundamentals_usd"]["periods"]})
         recent_periods = all_periods[-4:]
 
         company_one_liners = {ol["ticker"]: ol["tagline"] for ol in analysis.get("company_one_liners", [])}
 
-        # 회사 헤더: ticker + 짧은 회사명 (밸류에이션 표용)
         company_headers = "".join(
             f"<th><div style='font-weight: 600;'>{c['ticker']}</div>"
             f"<div style='font-size: 11px; color: #666 !important; font-weight: normal;'>{_short_name(c['company'].get('name', '?'))}</div></th>"
@@ -258,7 +303,6 @@ JSON 스키마:
                     market_rows += f"<td>{format_num(v, 'x' if 'PE' in label or 'EV' in label else '')}</td>"
             market_rows += "</tr>"
 
-        # 분기 재무 데이터 (USD billions) - 회사명 표시
         quarterly_section = ""
         for series_id, label in COMPARE_METRICS:
             quarterly_section += f"<h3 style='font-size: 14px; margin-top: 20px; color: #1a4480 !important;'>{label} (USD Billions)</h3>"
@@ -270,7 +314,6 @@ JSON 스키마:
             for c in companies:
                 normalized = c["fundamentals_usd"]["normalized"]
                 series_data = normalized.get(series_id, {})
-                # ticker + 회사명 같이 표시
                 ticker_str = c["ticker"]
                 name_str = c["company"].get("name", "?")
                 quarterly_section += (
@@ -288,7 +331,6 @@ JSON 스키마:
                 quarterly_section += "</tr>"
             quarterly_section += "</tbody></table>"
 
-        # 회사별 한 줄 평
         taglines_html = ""
         for c in companies:
             tagline = company_one_liners.get(c["ticker"], "—")
@@ -331,7 +373,6 @@ JSON 스키마:
 
         title = " vs ".join(c["ticker"] for c in companies) + " — Industry Comparison"
 
-        # 비교 회사 명단 표시
         roster_html = "<div style='margin: 16px 0; padding: 12px; background: #f0f4f8 !important; border-radius: 4px;'>"
         roster_html += "<strong style='color: #222 !important;'>비교 대상:</strong> "
         roster_html += " · ".join(
@@ -389,11 +430,18 @@ JSON 스키마:
         context = self.build_context(data)
         system_prompt = self.build_system_prompt()
 
-        import json
-        user_message = f"""다음 데이터로 {' vs '.join(self.tickers)} industry comparison 분석을 작성하라.
+        ticker_name_map = "\n".join(
+            f"  - {c['ticker']} = {c['company'].get('name', c['ticker'])}"
+            for c in data["companies"]
+        )
 
-🚨 분석은 최근 분기 ({context.get('latest_quarter')}, {context.get('prior_quarter')}) 중심.
-과거 분기는 추세 보여줄 때만 짧게 참고.
+        import json
+        user_message = f"""다음 데이터로 industry comparison 분석을 작성하라.
+
+🚨 회사 매핑 (반드시 회사명으로 언급, ticker 단독 금지):
+{ticker_name_map}
+
+🚨 분석 시점: 최근 분기 ({context.get('latest_quarter')}, {context.get('prior_quarter')}) 중심.
 
 <pre_fetched_data>
 {json.dumps(context, ensure_ascii=False, indent=2, default=str)}
