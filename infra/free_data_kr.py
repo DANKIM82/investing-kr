@@ -334,6 +334,72 @@ def _fundamentals_kr(ticker: str, periods: list[str], series_ids: list[str]) -> 
             seen.add(key)
             unique.append(dp)
     
+    # ────────────────────────────────────────────────────────────────────────
+    # 파생 시리즈 계산 (EBITDA, FCF, Total Debt, Diluted Shares Outstanding)
+    # ────────────────────────────────────────────────────────────────────────
+    # period별 raw 값 lookup
+    by_period: dict[str, dict[str, float]] = {}
+    for dp in unique:
+        by_period.setdefault(dp["calendar_period"], {})[dp["series_id"]] = dp["value"]
+    
+    derived_specs = [
+        # (sid, requires_all, calc_fn, note)
+        ("ebitda",
+         ["operating_income", "depreciation_amortization"],
+         lambda v: v["operating_income"] + abs(v["depreciation_amortization"]),
+         None),
+        ("free_cash_flow",
+         ["operating_cash_flow", "capex"],
+         lambda v: v["operating_cash_flow"] - abs(v["capex"]),
+         None),
+        ("total_debt",
+         ["short_term_debt", "long_term_debt"],
+         lambda v: v["short_term_debt"] + v["long_term_debt"],
+         None),
+        ("diluted_shares_outstanding",
+         ["net_income", "diluted_eps"],
+         lambda v: v["net_income"] / v["diluted_eps"] if v["diluted_eps"] else None,
+         "approx (net_income / diluted_eps)"),
+    ]
+    
+    for sid, requires, calc_fn, note in derived_specs:
+        # 요청에 명시적으로 포함됐거나, 빈 요청(전체)일 때만 계산
+        if series_ids and sid not in series_ids:
+            continue
+        meta = KR_SERIES_CATALOG.get(sid)
+        if not meta:
+            continue
+        for period, vals in by_period.items():
+            # 이미 raw 매칭으로 들어가 있으면 skip
+            if (sid, period) in seen:
+                continue
+            if not all(r in vals for r in requires):
+                continue
+            try:
+                value = calc_fn(vals)
+            except (ZeroDivisionError, TypeError):
+                continue
+            if value is None:
+                continue
+            label_en = meta["label_en"]
+            if note:
+                label_en = f"{label_en} — {note}"
+            unique.append({
+                "id": f"{code}_{sid}_{period}",
+                "series_id": sid,
+                "label": meta["label_kr"],
+                "label_en": label_en,
+                "category": meta["category"],
+                "calendar_period": period,
+                "fiscal_period": period,
+                "value": value,
+                "value_formatted": _format_kr(value, sid),
+                "unit": "shares" if sid == "diluted_shares_outstanding" else "KRW",
+                "source": "DART (calc.)",
+                "source_url": f"https://dart.fss.or.kr/dsab007/main.do?option=corp&textCrpNm={code}",
+            })
+            seen.add((sid, period))
+    
     unique.sort(key=lambda d: (d["series_id"], d["calendar_period"]))
     
     return {
@@ -400,31 +466,38 @@ KR_SERIES_CATALOG: dict[str, dict[str, Any]] = {
     "cost_of_revenue":  {"label_kr": "매출원가", "label_en": "Cost of Revenue", "category": "income_statement", "dart_labels": ["매출원가"]},
     "gross_profit":     {"label_kr": "매출총이익", "label_en": "Gross Profit", "category": "income_statement", "dart_labels": ["매출총이익"]},
     "sga":              {"label_kr": "판매비와관리비", "label_en": "SG&A", "category": "income_statement", "dart_labels": ["판매비와관리비"]},
+    "rd_expense":       {"label_kr": "경상연구개발비", "label_en": "R&D Expense", "category": "income_statement", "dart_labels": ["경상연구개발비", "연구개발비", "경상개발비", "연구비", "연구및개발비용"]},
     "operating_income": {"label_kr": "영업이익", "label_en": "Operating Income", "category": "income_statement", "dart_labels": ["영업이익", "영업이익(손실)"]},
-    "ebitda":           {"label_kr": "EBITDA (계산)", "label_en": "EBITDA (calc.)", "category": "income_statement", "dart_labels": []},  # 직접 계산 필요
-    "interest_expense": {"label_kr": "이자비용", "label_en": "Interest Expense", "category": "income_statement", "dart_labels": ["이자비용", "금융비용"]},
+    "ebitda":           {"label_kr": "EBITDA (계산)", "label_en": "EBITDA (calc.)", "category": "income_statement", "dart_labels": [], "derived": True},
+    "interest_expense": {"label_kr": "이자비용", "label_en": "Interest Expense", "category": "income_statement", "dart_labels": ["이자비용"]},
     "pretax_income":    {"label_kr": "법인세차감전순이익", "label_en": "Pretax Income", "category": "income_statement", "dart_labels": ["법인세비용차감전순이익", "법인세차감전순이익"]},
     "tax_expense":      {"label_kr": "법인세비용", "label_en": "Tax Expense", "category": "income_statement", "dart_labels": ["법인세비용"]},
     "net_income":       {"label_kr": "당기순이익", "label_en": "Net Income", "category": "income_statement", "dart_labels": ["당기순이익", "당기순이익(손실)"]},
     "diluted_eps":      {"label_kr": "희석주당이익", "label_en": "Diluted EPS", "category": "income_statement", "dart_labels": ["희석주당이익", "희석주당순이익"]},
     "basic_eps":        {"label_kr": "기본주당이익", "label_en": "Basic EPS", "category": "income_statement", "dart_labels": ["기본주당이익", "기본주당순이익"]},
+    "diluted_shares_outstanding": {"label_kr": "가중평균유통보통주식수 (계산)", "label_en": "Diluted Shares Outstanding (calc.)", "category": "income_statement", "dart_labels": [], "derived": True},
     
     # 재무상태표
-    "cash_and_equivalents": {"label_kr": "현금및현금성자산", "label_en": "Cash & Equivalents", "category": "balance_sheet", "dart_labels": ["현금및현금성자산"]},
+    "cash_and_equivalents":   {"label_kr": "현금및현금성자산", "label_en": "Cash & Equivalents", "category": "balance_sheet", "dart_labels": ["현금및현금성자산"]},
+    "short_term_investments": {"label_kr": "단기금융상품", "label_en": "Short-term Investments", "category": "balance_sheet", "dart_labels": ["단기금융상품", "단기투자자산", "단기금융자산"]},
     "current_assets":   {"label_kr": "유동자산", "label_en": "Current Assets", "category": "balance_sheet", "dart_labels": ["유동자산"]},
     "inventory":        {"label_kr": "재고자산", "label_en": "Inventory", "category": "balance_sheet", "dart_labels": ["재고자산"]},
     "trade_receivables":{"label_kr": "매출채권", "label_en": "Trade Receivables", "category": "balance_sheet", "dart_labels": ["매출채권", "매출채권및기타채권"]},
     "total_assets":     {"label_kr": "자산총계", "label_en": "Total Assets", "category": "balance_sheet", "dart_labels": ["자산총계"]},
     "current_liabilities": {"label_kr": "유동부채", "label_en": "Current Liabilities", "category": "balance_sheet", "dart_labels": ["유동부채"]},
-    "long_term_debt":   {"label_kr": "장기차입금", "label_en": "Long-term Debt", "category": "balance_sheet", "dart_labels": ["장기차입금", "비유동부채"]},
+    "short_term_debt":  {"label_kr": "단기차입금", "label_en": "Short-term Debt", "category": "balance_sheet", "dart_labels": ["단기차입금", "유동성장기차입금", "유동성사채"]},
+    "long_term_debt":   {"label_kr": "장기차입금", "label_en": "Long-term Debt", "category": "balance_sheet", "dart_labels": ["장기차입금", "장기사채", "비유동성장기차입금", "사채(비유동)"]},
+    "total_debt":       {"label_kr": "총차입금 (계산)", "label_en": "Total Debt (calc.)", "category": "balance_sheet", "dart_labels": [], "derived": True},
     "total_liabilities":{"label_kr": "부채총계", "label_en": "Total Liabilities", "category": "balance_sheet", "dart_labels": ["부채총계"]},
     "total_equity":     {"label_kr": "자본총계", "label_en": "Total Equity", "category": "balance_sheet", "dart_labels": ["자본총계"]},
     
     # 현금흐름표
-    "operating_cash_flow": {"label_kr": "영업활동현금흐름", "label_en": "Operating Cash Flow", "category": "cash_flow", "dart_labels": ["영업활동으로인한현금흐름", "영업활동현금흐름"]},
-    "capex":            {"label_kr": "유형자산취득", "label_en": "CapEx", "category": "cash_flow", "dart_labels": ["유형자산의취득", "유형자산취득"]},
-    "free_cash_flow":   {"label_kr": "잉여현금흐름 (계산)", "label_en": "FCF (calc.)", "category": "cash_flow", "dart_labels": []},
-    "dividends_paid":   {"label_kr": "배당금지급", "label_en": "Dividends Paid", "category": "cash_flow", "dart_labels": ["배당금의지급", "배당금지급"]},
+    "operating_cash_flow":       {"label_kr": "영업활동현금흐름", "label_en": "Operating Cash Flow", "category": "cash_flow", "dart_labels": ["영업활동으로인한현금흐름", "영업활동현금흐름", "영업활동 현금흐름"]},
+    "depreciation_amortization": {"label_kr": "감가상각비 및 무형자산상각비", "label_en": "D&A", "category": "cash_flow", "dart_labels": ["감가상각비및무형자산상각비", "감가상각비와무형자산상각비", "감가상각비", "유형자산감가상각비", "무형자산상각비", "유형자산및무형자산상각비"]},
+    "capex":            {"label_kr": "유형자산취득", "label_en": "CapEx", "category": "cash_flow", "dart_labels": ["유형자산의취득", "유형자산취득", "유형자산의 취득"]},
+    "free_cash_flow":   {"label_kr": "잉여현금흐름 (계산)", "label_en": "FCF (calc.)", "category": "cash_flow", "dart_labels": [], "derived": True},
+    "share_repurchase": {"label_kr": "자기주식의취득", "label_en": "Share Repurchase", "category": "cash_flow", "dart_labels": ["자기주식의취득", "자기주식취득", "자기주식의 취득"]},
+    "dividends_paid":   {"label_kr": "배당금지급", "label_en": "Dividends Paid", "category": "cash_flow", "dart_labels": ["배당금의지급", "배당금지급", "배당금의 지급"]},
 }
 
 
@@ -434,6 +507,13 @@ def _format_kr(v: float, sid: str) -> str:
         return "n/a"
     if "eps" in sid:
         return f"{v:,.0f}원 (₩{v:,.0f})"
+    if "shares" in sid:
+        abs_v = abs(v)
+        if abs_v >= 1e8:
+            return f"{v/1e8:,.2f}억주 ({v/1e6:,.0f}M shares)"
+        if abs_v >= 1e4:
+            return f"{v/1e4:,.0f}만주 ({v:,.0f} shares)"
+        return f"{v:,.0f}주"
     
     abs_v = abs(v)
     if abs_v >= 1e12:
@@ -909,6 +989,13 @@ def cmd_documents(args) -> dict[str, Any]:
 # ============================================================================
 
 def main():
+    # Windows cp949 콘솔에서도 ₩ 및 한글 출력 안전하게 (UTF-8 강제)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, Exception):
+        pass  # 일부 환경에서 reconfigure 미지원
+    
     parser = argparse.ArgumentParser(
         description="한국/미국/일본 시장 통합 데이터 wrapper (DART + yfinance + SEC EDGAR)"
     )
